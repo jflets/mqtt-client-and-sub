@@ -72,6 +72,7 @@ pydeck==0.8.1b0
 Pygments==2.16.1
 pyparsing==3.1.1
 python-dateutil==2.8.2
+python-dotenv==1.0.1
 python-slugify==8.0.1
 pytz==2023.3.post1
 pyzmq==25.1.2
