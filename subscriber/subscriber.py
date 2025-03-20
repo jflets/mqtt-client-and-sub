@@ -2,8 +2,8 @@ import paho.mqtt.client as mqtt
 import psycopg2
 import json
 import os
+import argparse
 from dotenv import load_dotenv
-import random
 import threading
 
 # Load environment variables from .env file
@@ -12,7 +12,6 @@ load_dotenv()
 # MQTT Broker Configuration from .env
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "machine/telemetry/data")
 MQTT_LWT_TOPIC = "machine/status"
 
 # AWS PostgreSQL Database Configuration from .env
@@ -22,12 +21,28 @@ DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")
 DB_PASS = os.getenv("DB_PASS")
 
-# Define multiple client IDs for subscribers
-SUBSCRIBERS = ["subscriber_1", "subscriber_2", "subscriber_3", "subscriber_4", "subscriber_5"]
+# Define 4 subscribers with their custom topics
+SUBSCRIBERS = [
+    {"client_id": "subscriber_1", "topic": "machine_1/telemetry/data"},
+    {"client_id": "subscriber_2", "topic": "machine_2/telemetry/data"},
+    {"client_id": "subscriber_3", "topic": "machine/+/telemetry/data"},  # Single-level wildcard example
+    {"client_id": "subscriber_4", "topic": "machine/#"},    # Multi-level wildcard at the end
+    {"client_id": "shared_subscriber", "topic": "$share/group1/machine/+/telemetry/data"}  # Shared subscription
+]
 
 # Initialize connection variables
 conn = None
 cursor = None
+
+# Command-line argument parsing
+parser = argparse.ArgumentParser(description="MQTT Subscriber")
+parser.add_argument(
+    "--show-payload", action="store_true", help="Flag to print the payload"
+)
+args = parser.parse_args()
+
+# Set the flag to show or hide payload based on the command-line argument
+show_payload = args.show_payload
 
 # Connect to PostgreSQL
 def connect_db():
@@ -45,14 +60,26 @@ def connect_db():
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"✅ Connected to MQTT Broker at {MQTT_BROKER}")
-        client.subscribe([(MQTT_TOPIC, 1), (MQTT_LWT_TOPIC, 1)])
-        print(f"✅ Subscribed to {MQTT_TOPIC} and {MQTT_LWT_TOPIC}")
+        
+        # Get the topic for this subscriber
+        topic = userdata["topic"]
+        print(f"🔔 Subscribing to topic: {topic}")  # Add this line to print the topic
+        
+        # Subscribe to the main topic and the LWT topic separately
+        client.subscribe(topic, 1)  # Corrected subscribe syntax for the main telemetry topic
+        client.subscribe(MQTT_LWT_TOPIC, 1)  # Corrected subscribe syntax for the LWT topic
+        
+        print(f"✅ Subscribed to {topic} and {MQTT_LWT_TOPIC}")
+        
+        # Connect to the database
         connect_db()
     else:
         print(f"❌ Connection failed with code {rc}")
 
+
 def on_message(client, userdata, msg):
-    print(f"📩 Received message from {msg.topic}: {msg.payload.decode()}")
+    if show_payload:
+        print(f"📩 Received message from {msg.topic}: {msg.payload.decode()}")
     
     try:
         payload = json.loads(msg.payload.decode())
@@ -71,8 +98,9 @@ def on_message(client, userdata, msg):
         print(f"❌ Error processing message: {e}")
 
 # Function to start a subscriber
-def start_subscriber(client_id):
+def start_subscriber(client_id, topic):
     client = mqtt.Client(client_id=client_id, clean_session=False)  # Set clean_session=False
+    client.user_data_set({"topic": topic})  # Pass the topic for the subscriber
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect(MQTT_BROKER, MQTT_PORT, 60)
@@ -82,8 +110,10 @@ def start_subscriber(client_id):
 # Function to start multiple subscribers concurrently
 def start_multiple_subscribers():
     threads = []
-    for client_id in SUBSCRIBERS:
-        thread = threading.Thread(target=start_subscriber, args=(client_id,))
+    for subscriber in SUBSCRIBERS:
+        client_id = subscriber["client_id"]
+        topic = subscriber["topic"]
+        thread = threading.Thread(target=start_subscriber, args=(client_id, topic))
         thread.start()
         threads.append(thread)
     
