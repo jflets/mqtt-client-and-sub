@@ -12,7 +12,6 @@ load_dotenv()
 # MQTT Broker Configuration
 MQTT_BROKER = os.getenv("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "machine/telemetry/data")
 MQTT_QOS = int(os.getenv("MQTT_QOS", 1))
 
 # MQTT v5 Features
@@ -40,19 +39,27 @@ LOG_ACKS = False  # Set to True to enable ACK message logging, False to disable
 # Flag to control whether payload is shown in the console
 SHOW_PAYLOAD = False  # Set to False to hide the payload in the console
 
+# Shared Subscription Settings
+SHARED_SUBSCRIPTION_NAME = "my-shared-subscribers"  # Define a shared subscription name
+SHARED_TOPIC = "machine/telemetry/data"  # Base topic for telemetry data
+SHARED_TOPIC_SUBSCRIPTION = f"$share/{SHARED_SUBSCRIPTION_NAME}/{SHARED_TOPIC}"
+
 print(f"MQTT Broker: {MQTT_BROKER}, QoS Level: {MQTT_QOS}")
 
 # MQTT Callbacks
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
-        print(f"✅ Connected to HiveMQ broker as {client._client_id.decode()}")  # Decode the client_id to a string
+        print(f"✅ Connected to HiveMQ broker as {client._client_id.decode()}")
+        # Ensure the machine is marked as online after a successful reconnect
         client.publish(
             MQTT_LWT_TOPIC,
-            json.dumps({"machine_id": client._client_id.decode(), "status": "online"}),  # Decode the client_id to a string
+            json.dumps({"machine_id": client._client_id.decode(), "status": "online"}),
             qos=MQTT_LWT_QOS,
             retain=MQTT_LWT_RETAIN
         )
-        client.subscribe(MQTT_TOPIC, qos=MQTT_QOS)  # Subscribe to see published messages
+        # Subscribe to the shared subscription topic
+        client.subscribe(SHARED_TOPIC_SUBSCRIPTION, qos=MQTT_QOS)
+        print(f"🗣️ Subscribed to shared subscription: {SHARED_TOPIC_SUBSCRIPTION}")
     else:
         print(f"❌ Connection failed with code {rc}")
 
@@ -72,8 +79,8 @@ def on_log(client, userdata, level, buf):
     if LOG_ACKS and any(ack in buf for ack in ["PUBACK", "PUBREC", "PUBREL", "PUBCOMP"]):
         print(f"📥 MQTT ACK: {buf}")
 
-def create_mqtt_client(machine_id):
-    client = mqtt.Client(client_id=f"machine_{machine_id}", protocol=mqtt.MQTTv5)  # Use MQTT v5
+def create_mqtt_client(machine_id, clean_session=False):  # Added clean_session parameter
+    client = mqtt.Client(client_id=f"machine_{machine_id}", protocol=mqtt.MQTTv5, clean_session=clean_session)  # Set clean_session
     client.will_set(MQTT_LWT_TOPIC, MQTT_LWT_MESSAGE.replace("offline", "online"), qos=MQTT_LWT_QOS, retain=MQTT_LWT_RETAIN)
     client.on_connect = on_connect
     client.on_publish = on_publish
@@ -82,9 +89,38 @@ def create_mqtt_client(machine_id):
     client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
     return client
 
+def simulate_internet_loss(client):
+    # Randomly simulate loss of internet connection (disconnect for 5 to 15 seconds)
+    loss_duration = random.randint(5, 15)
+    print(f"🌐 Simulating internet loss for {loss_duration} seconds...")
+    
+    # Update the LWT to "offline" while simulating the loss
+    client.publish(
+        MQTT_LWT_TOPIC,
+        json.dumps({"machine_id": client._client_id.decode(), "status": "offline"}),
+        qos=MQTT_LWT_QOS,
+        retain=MQTT_LWT_RETAIN
+    )
+    
+    time.sleep(loss_duration)
+    print("🌐 Internet connection restored.")
+    
+    # Once restored, mark the machine as "online" again
+    client.publish(
+        MQTT_LWT_TOPIC,
+        json.dumps({"machine_id": client._client_id.decode(), "status": "online"}),
+        qos=MQTT_LWT_QOS,
+        retain=MQTT_LWT_RETAIN
+    )
+
+
 def publish_data(client, machine_id):
     global running
     while running:
+        # Randomly simulate internet loss for some machines
+        if random.random() < 0.2:  # 20% chance to simulate internet loss
+            simulate_internet_loss(client)  # Pass the client object here
+
         # Generate basic telemetry data
         temperature = round(random.uniform(20.0, 30.0), 2)
         vibration = round(random.uniform(0.1, 5.0), 2)
@@ -119,13 +155,14 @@ def publish_data(client, machine_id):
         properties.PayloadFormatIndicator = MQTT_PAYLOAD_FORMAT
 
         if SHOW_PAYLOAD:
-            print(f"📡 Machine {machine_id} publishing to {MQTT_TOPIC}: {payload_str} (QoS {MQTT_QOS})")
+            print(f"📡 Machine {machine_id} publishing to machine_{machine_id}/telemetry/data: {payload_str} (QoS {MQTT_QOS})")
         else:
-            print(f"📡 Machine {machine_id} publishing to {MQTT_TOPIC}: Payload sent (QoS {MQTT_QOS})")
+            print(f"📡 Machine {machine_id} publishing to machine_{machine_id}/telemetry/data: Payload sent (QoS {MQTT_QOS})")
         
-        client.publish(MQTT_TOPIC, payload_str, qos=MQTT_QOS, retain=MQTT_RETAIN, properties=properties)
+        client.publish(f"machine_{machine_id}/telemetry/data", payload_str, qos=MQTT_QOS, retain=MQTT_RETAIN, properties=properties)
 
         time.sleep(15)
+
 
 def listen_for_stop():
     global running
@@ -147,7 +184,7 @@ if __name__ == "__main__":
         threads = []
         clients = []
         for machine_id in range(1, num_machines + 1):
-            client = create_mqtt_client(machine_id)
+            client = create_mqtt_client(machine_id, clean_session=False)  # Set clean_session to False
             client.loop_start()  # Start the MQTT loop for each client
             clients.append(client)
             
