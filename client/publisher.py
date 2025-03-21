@@ -79,8 +79,9 @@ def on_log(client, userdata, level, buf):
     if LOG_ACKS and any(ack in buf for ack in ["PUBACK", "PUBREC", "PUBREL", "PUBCOMP"]):
         print(f"📥 MQTT ACK: {buf}")
 
-def create_mqtt_client(machine_id, clean_session=False):  # Added clean_session parameter
-    client = mqtt.Client(client_id=f"machine_{machine_id}", protocol=mqtt.MQTTv5, clean_session=clean_session)  # Set clean_session
+def create_mqtt_client(machine_id):
+    # Remove clean_session argument, as it's not used in MQTT v5.0
+    client = mqtt.Client(client_id=f"machine_{machine_id}", protocol=mqtt.MQTTv5)  # Use MQTT v5
     client.will_set(MQTT_LWT_TOPIC, MQTT_LWT_MESSAGE.replace("offline", "online"), qos=MQTT_LWT_QOS, retain=MQTT_LWT_RETAIN)
     client.on_connect = on_connect
     client.on_publish = on_publish
@@ -88,6 +89,7 @@ def create_mqtt_client(machine_id, clean_session=False):  # Added clean_session 
     client.on_log = on_log  
     client.connect(MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE)
     return client
+
 
 def simulate_internet_loss(client):
     # Randomly simulate loss of internet connection (disconnect for 5 to 15 seconds)
@@ -184,7 +186,7 @@ if __name__ == "__main__":
         threads = []
         clients = []
         for machine_id in range(1, num_machines + 1):
-            client = create_mqtt_client(machine_id, clean_session=False)  # Set clean_session to False
+            client = create_mqtt_client(machine_id)  # No need to pass clean_session
             client.loop_start()  # Start the MQTT loop for each client
             clients.append(client)
             
