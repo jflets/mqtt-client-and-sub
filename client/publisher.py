@@ -62,7 +62,22 @@ def on_connect(client, userdata, flags, rc, properties=None):
         print(f"🗣️ Subscribed to shared subscription: {SHARED_TOPIC_SUBSCRIPTION}")
     else:
         print(f"❌ Connection failed with code {rc}")
+        reconnect(client)
 
+def reconnect(client):
+    max_retries = 5
+    retries = 0
+    while retries < max_retries:
+        try:
+            print(f"Attempting to reconnect... Retry {retries + 1}")
+            client.reconnect()
+            print("✅ Reconnected successfully.")
+            return
+        except Exception as e:
+            retries += 1
+            print(f"❌ Reconnect failed. Error: {e}")
+            time.sleep(2 ** retries)  # Exponential backoff
+    print("❌ Failed to reconnect after multiple attempts.")
 
 def on_publish(client, userdata, mid):
     print(f"📨 Message {mid} published successfully")
@@ -72,7 +87,6 @@ def on_message(client, userdata, message):
         print(f"📥 Received message on {message.topic}: {message.payload.decode()} (QoS {message.qos})")
     else:
         print(f"📥 Received message on {message.topic} (Payload hidden) (QoS {message.qos})")
-
 
 # Log ACK messages
 def on_log(client, userdata, level, buf):
